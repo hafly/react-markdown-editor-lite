@@ -13,8 +13,9 @@ import getUploadPlaceholder from '../utils/uploadPlaceholder';
 import defaultConfig from './defaultConfig';
 import './index.less';
 import { HtmlRender, HtmlType } from './preview';
+import CodeMirror from './CodeMirror';
 
-type Plugin = { comp: any; config: any };
+type Plugin = {comp: any; config: any};
 
 interface EditorProps extends EditorConfig {
   id?: string;
@@ -43,7 +44,7 @@ interface EditorState {
   text: string;
   html: HtmlType;
   fullScreen: boolean;
-  plugins: { [x: string]: React.ReactElement[] };
+  plugins: {[x: string]: React.ReactElement[]};
   view: {
     menu: boolean;
     md: boolean;
@@ -57,6 +58,7 @@ interface EditorState {
 
 class Editor extends React.Component<EditorProps, EditorState> {
   private static plugins: Plugin[] = [];
+
   /**
    * Register plugin
    * @param {any} comp Plugin component
@@ -72,6 +74,7 @@ class Editor extends React.Component<EditorProps, EditorState> {
     }
     Editor.plugins.push({ comp, config });
   }
+
   /**
    * Unregister plugin
    * @param {any} comp Plugin component
@@ -84,6 +87,7 @@ class Editor extends React.Component<EditorProps, EditorState> {
       }
     }
   }
+
   /**
    * Unregister all plugins
    * @param {any} comp Plugin component
@@ -91,6 +95,7 @@ class Editor extends React.Component<EditorProps, EditorState> {
   static unuseAll() {
     Editor.plugins = [];
   }
+
   /**
    * Locales
    */
@@ -101,6 +106,7 @@ class Editor extends React.Component<EditorProps, EditorState> {
   private config: EditorConfig;
   private emitter: Emitter;
 
+  private nodeEditor: any;
   private nodeMdText = React.createRef<HTMLTextAreaElement>();
   private nodeMdPreview = React.createRef<HtmlRender>();
   private nodeMdPreviewWrapper = React.createRef<HTMLDivElement>();
@@ -219,7 +225,7 @@ class Editor extends React.Component<EditorProps, EditorState> {
       // Use all registered plugins
       plugins = [...Editor.plugins];
     }
-    const result: { [x: string]: React.ReactElement[] } = {};
+    const result: {[x: string]: React.ReactElement[]} = {};
     plugins.forEach(it => {
       if (typeof result[it.comp.align] === 'undefined') {
         result[it.comp.align] = [];
@@ -243,6 +249,7 @@ class Editor extends React.Component<EditorProps, EditorState> {
   private scrollScale = 1;
   private isSyncingScroll = false;
   private shouldSyncScroll: 'md' | 'html' = 'md';
+
   private handleSyncScroll(type: 'md' | 'html', e: React.UIEvent<HTMLTextAreaElement | HTMLDivElement>) {
     // prevent loop
     if (type !== this.shouldSyncScroll) {
@@ -266,13 +273,13 @@ class Editor extends React.Component<EditorProps, EditorState> {
     if (!this.isSyncingScroll) {
       this.isSyncingScroll = true;
       requestAnimationFrame(() => {
-        if (this.nodeMdText.current && this.nodeMdPreviewWrapper.current) {
+        if (this.nodeEditor.display.cursorDiv && this.nodeMdPreviewWrapper.current) {
           if (type === 'md') {
             // left to right
-            this.nodeMdPreviewWrapper.current.scrollTop = this.nodeMdText.current.scrollTop / this.scrollScale;
+            this.nodeMdPreviewWrapper.current.scrollTop = this.nodeEditor.doc.scrollTop / this.scrollScale;
           } else {
             // right to left
-            this.nodeMdText.current.scrollTop = this.nodeMdPreviewWrapper.current.scrollTop * this.scrollScale;
+            this.nodeEditor.scrollTo(null, this.nodeMdPreviewWrapper.current.scrollTop * this.scrollScale);
           }
         }
         this.isSyncingScroll = false;
@@ -335,6 +342,11 @@ class Editor extends React.Component<EditorProps, EditorState> {
     this.setText(value, e);
   }
 
+  private handleChange2(value: any) {
+    // 触发内部事件
+    this.setText(value);
+  }
+
   /**
    * Listen paste event to support paste images
    */
@@ -379,6 +391,7 @@ class Editor extends React.Component<EditorProps, EditorState> {
   getMdElement() {
     return this.nodeMdText.current;
   }
+
   getHtmlElement() {
     return this.nodeMdPreviewWrapper.current;
   }
@@ -391,6 +404,7 @@ class Editor extends React.Component<EditorProps, EditorState> {
       this.nodeMdText.current.setSelectionRange(0, 0, 'none');
     }
   }
+
   /**
    * Get selected
    * @return {Selection}
@@ -414,7 +428,7 @@ class Editor extends React.Component<EditorProps, EditorState> {
    * Set selected
    * @param {Selection} to
    */
-  setSelection(to: { start: number; end: number }) {
+  setSelection(to: {start: number; end: number}) {
     if (this.nodeMdText.current) {
       this.nodeMdText.current.setSelectionRange(to.start, to.end, 'forward');
       this.nodeMdText.current.focus();
@@ -427,7 +441,12 @@ class Editor extends React.Component<EditorProps, EditorState> {
    * @param option
    */
   insertMarkdown(type: string, option: any = {}) {
-    let selection = this.getSelection();
+    let _selection = this.getSelection();
+    let selection = {
+      start: _selection.start,
+      end: _selection.end,
+      text: this.nodeEditor.getSelection(),
+    };
     let decorateOption = option ? { ...option } : {};
     if (type === 'image') {
       decorateOption = {
@@ -454,8 +473,57 @@ class Editor extends React.Component<EditorProps, EditorState> {
       selection = this.getSelection();
     }
     const decorate = getDecorated(selection.text, type, decorateOption);
-    this.insertText(decorate.text, true, decorate.selection);
+
+    let cursor = this.nodeEditor.getCursor();
+
+    if (selection.text) {
+      this.nodeEditor.replaceSelection(decorate.text);
+    }
+    else {
+      this.nodeEditor.replaceRange(decorate.text, this.nodeEditor.getCursor());
+    }
+
+    switch (type) {
+      case 'h1':
+      case 'h2':
+      case 'h3':
+      case 'h4':
+      case 'h5':
+      case 'h6':
+        cursor.ch = decorate.selection!.end;
+        cursor.line += 1;
+        break;
+      case 'bold':
+      case 'italic':
+      case 'underline':
+      case 'strikethrough':
+      case 'inlinecode':
+        cursor.ch += decorate.selection!.start;
+        break;
+      case 'unordered':
+      case 'order':
+      case 'quote':
+      case 'hr':
+      case 'table':
+        // 不改变光标位置
+        break;
+      case 'code':
+        cursor.ch = 0;
+        cursor.line += 2;
+        break;
+      case 'image':
+        cursor.ch += 4;
+        break;
+      case 'link':
+        cursor.ch += 3;
+        break;
+    }
+    // 设置鼠标位置
+    this.nodeEditor.focus();
+    this.nodeEditor.setCursor(cursor);
+    // this.insertText(decorate.text, true, decorate.selection);
   }
+
   /**
    * Insert a placeholder, and replace it when the Promise resolved
    * @param placeholder
@@ -468,13 +536,14 @@ class Editor extends React.Component<EditorProps, EditorState> {
       this.setText(text);
     });
   }
+
   /**
    * Insert text
    * @param {string} value The text will be insert
    * @param {boolean} replaceSelected Replace selected text
    * @param {Selection} newSelection New selection
    */
-  insertText(value: string = '', replaceSelected: boolean = false, newSelection?: { start: number; end: number }) {
+  insertText(value: string = '', replaceSelected: boolean = false, newSelection?: {start: number; end: number}) {
     const { text } = this.state;
     const selection = this.getSelection();
     const beforeContent = text.slice(0, selection.start);
@@ -485,13 +554,13 @@ class Editor extends React.Component<EditorProps, EditorState> {
       undefined,
       newSelection
         ? {
-            start: newSelection.start + beforeContent.length,
-            end: newSelection.end + beforeContent.length,
-          }
+          start: newSelection.start + beforeContent.length,
+          end: newSelection.end + beforeContent.length,
+        }
         : {
-            start: selection.start,
-            end: selection.start,
-          },
+          start: selection.start,
+          end: selection.start,
+        },
     );
   }
 
@@ -503,7 +572,7 @@ class Editor extends React.Component<EditorProps, EditorState> {
   setText(
     value: string = '',
     event?: React.ChangeEvent<HTMLTextAreaElement>,
-    newSelection?: { start: number; end: number },
+    newSelection?: {start: number; end: number},
   ) {
     const { onChangeTrigger = 'both' } = this.config;
     const text = value.replace(/↵/g, '\n');
@@ -565,6 +634,7 @@ class Editor extends React.Component<EditorProps, EditorState> {
    * Listen keyboard events
    */
   private keyboardListeners: KeyboardEventListener[] = [];
+
   /**
    * Listen keyboard events
    * @param {KeyboardEventListener} data
@@ -578,6 +648,7 @@ class Editor extends React.Component<EditorProps, EditorState> {
       this.keyboardListeners.push(data);
     }
   }
+
   /**
    * Unlisten keyboard events
    * @param {KeyboardEventListener} data
@@ -592,6 +663,7 @@ class Editor extends React.Component<EditorProps, EditorState> {
       this.keyboardListeners.splice(index, 1);
     }
   }
+
   private handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     // 遍历监听数组，找找有没有被监听
     for (const it of this.keyboardListeners) {
@@ -623,6 +695,7 @@ class Editor extends React.Component<EditorProps, EditorState> {
         return this.emitter.EVENT_SCROLL;
     }
   }
+
   /**
    * Listen events
    * @param {EditorEvent} event Event type
@@ -634,6 +707,7 @@ class Editor extends React.Component<EditorProps, EditorState> {
       this.emitter.on(eventType, cb);
     }
   }
+
   /**
    * Unlisten events
    * @param {EditorEvent} event Event type
@@ -651,7 +725,7 @@ class Editor extends React.Component<EditorProps, EditorState> {
    * Can show or hide: editor, preview, menu
    * @param {object} to
    */
-  setView(to: { md?: boolean; menu?: boolean; html?: boolean }) {
+  setView(to: {md?: boolean; menu?: boolean; html?: boolean}) {
     const newView = { ...this.state.view, ...to };
     this.setState(
       {
@@ -662,6 +736,7 @@ class Editor extends React.Component<EditorProps, EditorState> {
       },
     );
   }
+
   /**
    * Get view property
    * @return {object}
@@ -686,6 +761,7 @@ class Editor extends React.Component<EditorProps, EditorState> {
       );
     }
   }
+
   /**
    * Is full screen
    * @return {boolean}
@@ -741,26 +817,33 @@ class Editor extends React.Component<EditorProps, EditorState> {
     const previewerId = id ? `${id}_html` : undefined;
     return (
       <div
-        id={id}
-        className={`rc-md-editor ${fullScreen ? 'full' : ''}`}
-        style={this.props.style}
-        onKeyDown={this.handleKeyDown}
-        onDrop={this.handleDrop}
+        id={ id }
+        className={ `rc-md-editor ${fullScreen ? 'full' : ''}` }
+        style={ this.props.style }
+        onKeyDown={ this.handleKeyDown }
+        onDrop={ this.handleDrop }
       >
-        <NavigationBar visible={isShowMenu} left={getPluginAt('left')} right={getPluginAt('right')} />
+        <NavigationBar visible={ isShowMenu } left={ getPluginAt('left') } right={ getPluginAt('right') } />
         <div className="editor-container">
-          {showHideMenu && (
+          { showHideMenu && (
             <ToolBar>
               <span
                 className="button button-type-menu"
-                title={isShowMenu ? 'hidden menu' : 'show menu'}
-                onClick={this.handleToggleMenu}
+                title={ isShowMenu ? 'hidden menu' : 'show menu' }
+                onClick={ this.handleToggleMenu }
               >
-                <Icon type={`expand-${isShowMenu ? 'less' : 'more'}`} />
+                <Icon type={ `expand-${isShowMenu ? 'less' : 'more'}` } />
               </span>
             </ToolBar>
-          )}
-          <section className={`section sec-md ${view.md ? 'visible' : 'in-visible'}`}>
+          ) }
+          <CodeMirror
+            className={ `section sec-md ${view.md ? 'visible' : 'in-visible'}` }
+            value={ this.state.text }
+            onInit={ (editor: any) => this.nodeEditor = editor }
+            onChange={ (value: any) => this.handleChange2(value) }
+            onScroll={ this.handleInputScroll }
+          />
+          { /*<section className={`section sec-md ${view.md ? 'visible' : 'in-visible'}`}>
             <textarea
               id={editorId}
               ref={this.nodeMdText}
@@ -777,16 +860,16 @@ class Editor extends React.Component<EditorProps, EditorState> {
               onFocus={this.handleFocus}
               onBlur={this.handleBlur}
             />
-          </section>
-          <section className={`section sec-html ${view.html ? 'visible' : 'in-visible'}`}>
+          </section>*/ }
+          <section className={ `section sec-html ${view.html ? 'visible' : 'in-visible'}` }>
             <div
-              id={previewerId}
+              id={ previewerId }
               className="section-container html-wrap"
-              ref={this.nodeMdPreviewWrapper}
-              onMouseOver={() => (this.shouldSyncScroll = 'html')}
-              onScroll={this.handlePreviewScroll}
+              ref={ this.nodeMdPreviewWrapper }
+              onMouseOver={ () => (this.shouldSyncScroll = 'html') }
+              onScroll={ this.handlePreviewScroll }
             >
-              <HtmlRender html={this.state.html} className={this.config.htmlClass} ref={this.nodeMdPreview} />
+              <HtmlRender html={ this.state.html } className={ this.config.htmlClass } ref={ this.nodeMdPreview } />
             </div>
           </section>
         </div>

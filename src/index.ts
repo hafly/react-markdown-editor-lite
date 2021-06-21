@@ -37,8 +37,8 @@ Editor.use(BlockCodeBlock);
 Editor.use(Table);
 Editor.use(Image);
 Editor.use(Link);
-Editor.use(Clear);
-Editor.use(Logger);
+// Editor.use(Clear);
+// Editor.use(Logger);
 Editor.use(ModeToggle);
 Editor.use(FullScreen);
 
